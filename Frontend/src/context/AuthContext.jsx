@@ -10,6 +10,7 @@ const localState = localStorage.getItem('refresh');
 const defaultState = {
   refreshToken: '',
   accessToken: '',
+  userId: '',
 };
 
 const getToken = async (state, dispatch, setRefresh) => {
@@ -44,8 +45,6 @@ const reducer = (state, action) => {
       break;
 
     case 'SIGNOUT':
-      console.log('wait a min');
-
       mods = defaultState;
       break;
 

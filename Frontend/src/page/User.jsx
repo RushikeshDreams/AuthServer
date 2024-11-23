@@ -27,10 +27,29 @@ const User = () => {
     }
   };
 
+  const handleLogout = async (e) => {
+    e.preventDefault();
+    try {
+      await axios.post(`${import.meta.env.VITE_API_URL}/signout`, { userId: '673b48a96ac710928b6d4f0e' });
+      dispatch({ type: 'SIGNOUT' });
+    } catch (error) {
+      throw new Error(error);
+    }
+  };
+
   useEffect(() => {
     getCompaniesDetails();
   }, [refresh]);
-  return <div>User</div>;
+  return (
+    <div style={{ display: 'flex' }}>
+      <button
+        className="button"
+        onClick={handleLogout}>
+        Logout
+      </button>
+      <h1>User</h1>
+    </div>
+  );
 };
 
 export default User;
