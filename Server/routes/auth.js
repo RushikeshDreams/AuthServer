@@ -1,6 +1,7 @@
 const UserModel = require('../models/user');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { generateAccessAndRefreshTokens } = require('../controller/userController');
 
 const signup = async (req, res) => {
   const { email, name, password } = req.body;
@@ -28,20 +29,22 @@ const signin = async (req, res) => {
       return res.status(401).send('Invalid password');
     }
 
-    const accessToken = jwt.sign({ id: user._id, name: user.name }, process.env.SECRETKEY, {
-      expiresIn: process.env.ACCESSEXPIRE,
-    });
+    const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(user._id);
 
-    const refreshToken = jwt.sign({ id: user._id, name: user.name }, process.env.SECRETKEY, {
-      expiresIn: process.env.REFRESHEXPIRE,
-    });
+    user.refreshTokens.push(refreshToken);
+    if (user.refreshTokens.length > 20) {
+      user.refreshTokens.shift();
+    }
 
-    res.status(200).json({ refreshToken, accessToken });
+    await user.save();
+
+    res.status(200).json({ accessToken, refreshToken, userId: user._id });
   } catch (error) {
     console.error(error);
     res.status(500).send('Server error');
   }
 };
+
 const getAccessToken = async (req, res, next) => {
   try {
     const { refreshtoken } = req.headers;
@@ -49,11 +52,16 @@ const getAccessToken = async (req, res, next) => {
     if (refreshTokenData.name === 'TokenExpiredError') {
       return res.status(404).json({ message: 'Token Expired' });
     }
-    const newAccessToken = jwt.sign({ id: refreshTokenData.id, name: refreshTokenData.name }, process.env.SECRETKEY, {
-      expiresIn: process.env.ACCESSEXPIRE,
-    });
-
-    res.status(200).json({ accessToken: newAccessToken });
+    const user = await UserModel.findById(refreshTokenData?._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    const lastToken = user.refreshTokens[user.refreshTokens.length - 1];
+    if (!lastToken || lastToken !== refreshtoken) {
+      return res.status(401).json({ message: 'Refresh token is incorrect' });
+    }
+    const { accessToken } = await generateAccessAndRefreshTokens(user?._id);
+    res.status(200).json({ accessToken: accessToken });
   } catch (error) {
     console.log(error);
     next({ st: 500, ms: error.message });
@@ -63,33 +71,53 @@ const getAccessToken = async (req, res, next) => {
 const authenticate = async (req, res, next) => {
   try {
     const { accesstoken } = req.headers;
-    console.log(accesstoken);
-
-    if (!accesstoken || !accesstoken) {
-      return res.status(401).json({ message: 'Unauthorized' });
+    if (!accesstoken) {
+      return res.status(401).json({ message: 'Unauthorized user' });
     }
-
-    try {
-      const decoded = jwt.verify(accesstoken, process.env.SECRETKEY);
-      console.log(decoded);
-
-      req.user = decoded;
-      next();
-    } catch (error) {
-      if (error.name === 'TokenExpiredError') {
-        return res.status(403).json({ message: 'Access Token Expired' });
-      } else {
-        return res.status(401).json({ message: 'Invalid Access Token' });
-      }
+    const decoded = jwt.verify(accesstoken, process.env.SECRETKEY);
+    const user = await UserModel.findById(decoded?._id);
+    if (user.refreshTokens.length >= 20) {
+      user.refreshTokens = [];
+      await user.save();
+      return res.status(401).json({
+        message: 'Too many refresh tokens. Please log out from other devices.',
+      });
     }
+    req.user = decoded;
+    next();
   } catch (refreshError) {
     console.error('Refresh token verification failed:', refreshError);
     return res.status(401).json({ message: 'Unauthorized' });
   }
 };
+
+const signout = async (req, res) => {
+  const { userId } = req.body;
+
+  try {
+    if (!userId) {
+      return res.status(400).json({ message: 'User ID is required' });
+    }
+
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.refreshTokens = [];
+    await user.save();
+
+    res.status(200).json({ message: 'Signed out successfully. All refresh tokens cleared.' });
+  } catch (error) {
+    console.error('Error in signout:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
 module.exports = {
   signin,
   signup,
+  signout,
   authenticate,
   getAccessToken,
 };
